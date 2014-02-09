@@ -9,6 +9,7 @@ TextLayer *text_c;
 TextLayer *text_now30;
 TextLayer *text_a30;
 TextLayer *text_b30;
+
 Layer *container_layer;
 InverterLayer *needle_line;
 InverterLayer *invert_screen_layer;
@@ -89,15 +90,11 @@ void container_update_proc(struct Layer *layer, GContext *ctx) {
 		graphics_draw_line(ctx, GPoint(144-5, center_y - (SPACER * multiplier)), GPoint(144, center_y - (SPACER * multiplier)));
 		graphics_draw_line(ctx, GPoint(0, center_y - (SPACER * multiplier)), GPoint(5, center_y - (SPACER * multiplier)));
 	}
-
 }
 
-void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+void update_clock_text(struct tm *tick_time) {
 	int i = tick_time->tm_hour; // add an extra <cycle> so the -1 value works. We modulo it anyway. 
 
-	int minutes = tick_time->tm_min;
-	float hour_percent = (float)minutes/60.0;
-	
 	if (clock_is_24h_style()) {
 		i += 24;
 		snprintf(hour_buffer, sizeof("00"), "%d", hours24[i%24]);
@@ -116,22 +113,38 @@ void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
 	text_layer_set_text(text_a, hour_a_buffer);
 	text_layer_set_text(text_b, hour_b_buffer);
 	text_layer_set_text(text_c, hour_c_buffer);
-	
+}
+
+void update_clock_position (struct tm *tick_time) {
+	int minutes = tick_time->tm_min;
+	float hour_percent = (float)minutes/60.0;
 
 	int y_offset =(int) -1 * (hour_percent * SPACER);
+#if DEBUG
 	APP_LOG(APP_LOG_LEVEL_INFO, "y_offset: %d", y_offset);
+#endif
 	layer_set_bounds(container_layer, GRect(0, y_offset, 144, 168));
 }
 
+void tick_handler(struct tm *tick_time, TimeUnits units_changed) {
+        update_clock_text(tick_time); // probably only needs to be done once an hour.
+        update_clock_position(tick_time);
+        layer_mark_dirty(container_layer);
+}
+
 void handle_init(void) {
+	time_t t = time(NULL);;
+	struct tm *now;
+	now = localtime(&t);
+
 	my_window = window_create();
+	window_set_fullscreen(my_window, true);
 
 	// set up the text labels
 	int center_y = (CONTAINER_HEIGHT/2) - (font_size/1.5);
 	int start_x = 30;
 	int end_x = 144-30-30;
 	container_layer = layer_create(GRect(0, (168/2 - CONTAINER_HEIGHT/2), 144, CONTAINER_HEIGHT));
-	layer_set_update_proc(container_layer, container_update_proc);
 	layer_set_clips(container_layer, true);
 
 	text_a = text_layer_create(GRect(start_x, (center_y - SPACER), end_x, 50));
@@ -182,35 +195,42 @@ void handle_init(void) {
 	text_layer_set_font(text_c, fonts_get_system_font(FONT_KEY_BITHAM_42_BOLD));
 	layer_add_child(container_layer, (Layer*) text_c);
 	
-	// set up inverter layers (last)
-	needle_line = inverter_layer_create(GRect(0, (168/2), 144, 1));
-	window_set_fullscreen(my_window, true);
-
 	layer_add_child(window_get_root_layer(my_window), container_layer);
-	// set up tick handler
-	tick_timer_service_subscribe(MINUTE_UNIT, (TickHandler) tick_handler);
 	
-	// push window to stack 
+	// a static layers
+	needle_line = inverter_layer_create(GRect(0, (168/2), 144, 1));
 	layer_add_child(window_get_root_layer(my_window), (Layer*) needle_line);
+
 	invert_screen_layer = inverter_layer_create(GRect(0, 0, 144, 168));
 	layer_add_child(window_get_root_layer(my_window), (Layer*) invert_screen_layer);
 
+	// push window to stack 
 	window_stack_push(my_window, true);
+
+	// update clockface with correct hours text and position
+	update_clock_text(now);
+	update_clock_position(now);
+
+	// set up updaters last (don't want them to execute before we're ready.)
+	layer_set_update_proc(container_layer, container_update_proc);
+	tick_timer_service_subscribe(MINUTE_UNIT, (TickHandler) tick_handler);
 }
 
 void handle_deinit(void) {
-	text_layer_destroy(text_now);
-	text_layer_destroy(text_a);
-	text_layer_destroy(text_b);
-	text_layer_destroy(text_c);
-	text_layer_destroy(text_now30);
-	text_layer_destroy(text_a30);
-	text_layer_destroy(text_b30);
-
 	tick_timer_service_unsubscribe();
-	layer_destroy(container_layer);
-	inverter_layer_destroy(needle_line);
+
 	inverter_layer_destroy(invert_screen_layer);
+	inverter_layer_destroy(needle_line);
+
+	text_layer_destroy(text_c);
+	text_layer_destroy(text_b30);
+	text_layer_destroy(text_b);
+	text_layer_destroy(text_now30);
+	text_layer_destroy(text_now);
+	text_layer_destroy(text_a30);
+	text_layer_destroy(text_a);
+
+	layer_destroy(container_layer);
 	window_destroy(my_window);
 }
 
